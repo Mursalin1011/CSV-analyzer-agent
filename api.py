@@ -29,14 +29,14 @@ set_llm_cache(InMemoryCache())
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.3
+    temperature=0.1  # Reduced from 0.3 for more focused responses
 )
 
 # Prompt template for data insights
 prompt_template = PromptTemplate(
     input_variables=["data_sample", "columns", "stats_summary"],
     template="""
-    You are a data analyst expert. Analyze the following dataset information and provide key insights:
+    Analyze this dataset and provide key insights:
 
     Columns: {columns}
     
@@ -46,13 +46,13 @@ prompt_template = PromptTemplate(
     Sample Data:
     {data_sample}
 
-    Please provide:
-    1. Summary of key patterns and trends
-    2. Notable correlations or anomalies
-    3. Business implications (if applicable)
-    4. Recommendations for further analysis
+    Provide:
+    1. Key patterns/trends (concise)
+    2. Notable correlations/anomalies
+    3. Business implications (if any)
+    4. Analysis recommendations
     
-    Format your response in clear markdown with headers.
+    Format in clear markdown with headers.
     """
 )
 
@@ -107,7 +107,8 @@ FILE_LOADERS = {
 
 # Cache key generation
 def get_cache_key(df):
-    sample = df.head(10).to_string(index=False)
+    # Use a smaller sample for cache key to reduce computation
+    sample = df.head(3).to_string(index=False)  # Reduced from 10 to 3 rows
     return hashlib.md5(sample.encode()).hexdigest()
 
 
@@ -153,8 +154,10 @@ async def upload_file_for_insights(file: UploadFile = File(...)):
         
         # Prepare data for LLM
         columns_info = ", ".join(df.columns.tolist())
-        stats_summary = df.describe().to_string()
-        data_sample = df.head(10).to_string(index=False)
+        # Limit stats to essential metrics to reduce token usage
+        stats_summary = df.describe().loc[['count', 'mean', 'std']].to_string()  # Only key stats
+        # Limit data sample to reduce token usage
+        data_sample = df.head(5).to_string(index=False)  # Reduced from 10 to 5 rows
         
         # Generate cache key
         cache_key = get_cache_key(df)
