@@ -1,18 +1,20 @@
-import threading
+import subprocess
 import uvicorn
-from trial1 import api_app  # Replace with actual filename
+import sys
+import os
+from api import api_app
 
 def run_streamlit():
-    import streamlit.web.bootstrap
-    streamlit.web.bootstrap.run('trial1.py', '', [], {})  # Replace with actual filename
+    # Run Streamlit as a separate process
+    cmd = [sys.executable, "-m", "streamlit", "run", "trial1.py", "--server.port=8501"]
+    subprocess.Popen(cmd)
 
 def run_api():
     uvicorn.run(api_app, host="127.0.0.1", port=8000)
 
 if __name__ == "__main__":
-    # Run Streamlit in a separate thread
-    st_thread = threading.Thread(target=run_streamlit)
-    st_thread.start()
+    # Run Streamlit in a separate process
+    run_streamlit()
     
     # Run FastAPI server
     run_api()

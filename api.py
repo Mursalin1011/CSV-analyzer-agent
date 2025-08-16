@@ -1,19 +1,9 @@
-# requirements.txt
-# langchain-google-genai
-# pandas
-# python-dotenv
-# streamlit
-# openpyxl
-# langsmith
-# langgraph
-
-import os
-import hashlib
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from pydantic import BaseModel
 import pandas as pd
-import streamlit as st
 from io import StringIO, BytesIO
-from typing import Dict, Any
-from dotenv import load_dotenv
+import hashlib
+import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import tracing_v2_enabled
@@ -22,9 +12,8 @@ from langchain.globals import set_llm_cache
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 import operator
-import requests
-from utils import save_insights_to_file
-
+from dotenv import load_dotenv
+from utils import save_insights_to_file, load_insights_from_file, INSIGHTS_CACHE_FILE
 
 # Load environment variables from .env file
 load_dotenv()
@@ -75,7 +64,7 @@ class AnalysisState(TypedDict):
     insights: Annotated[str, operator.add]
 
 # Node functions for LangGraph
-def generate_insights(state: AnalysisState) -> Dict[str, Any]:
+def generate_insights(state: AnalysisState) -> dict:
     """Generate insights using LLM"""
     with tracing_v2_enabled():
         try:
@@ -99,14 +88,14 @@ workflow.add_edge("insights", END)
 app_graph = workflow.compile()
 
 # File format handlers
-def load_csv(uploaded_file):
-    return pd.read_csv(uploaded_file)
+def load_csv(content):
+    return pd.read_csv(StringIO(content.decode('utf-8')))
 
-def load_excel(uploaded_file):
-    return pd.read_excel(uploaded_file)
+def load_excel(content):
+    return pd.read_excel(BytesIO(content))
 
-def load_json(uploaded_file):
-    return pd.read_json(uploaded_file)
+def load_json(content):
+    return pd.read_json(StringIO(content.decode('utf-8')))
 
 # File loader mapping
 FILE_LOADERS = {
@@ -121,43 +110,46 @@ def get_cache_key(df):
     sample = df.head(10).to_string(index=False)
     return hashlib.md5(sample.encode()).hexdigest()
 
-# Streamlit UI
-st.title("📊 CSV Data Insights Generator")
-st.markdown("Upload your data file to get AI-powered insights using Google Gemini")
 
-# Display API information
-st.info("API Endpoint for file upload: POST http://127.0.0.1:8000/insights/file")
 
-# File uploader with multiple format support
-uploaded_file = st.file_uploader(
-    "Upload your file", 
-    type=["csv", "xlsx", "xls", "json"]
-)
+# FastAPI app for API endpoint
+api_app = FastAPI(title="CSV Insights API", version="1.0.0")
 
-if uploaded_file:
+class InsightsResponse(BaseModel):
+    insights: str
+    cache_key: str
+
+class FileUploadResponse(BaseModel):
+    insights: str
+    cache_key: str
+
+@api_app.get("/insights/{cache_key}", response_model=InsightsResponse)
+async def get_insights(cache_key: str):
+    """Get insights by cache key"""
+    insights = load_insights_from_file(cache_key)
+    if insights is None:
+        raise HTTPException(status_code=404, detail="Insights not found for this key")
+    
+    return InsightsResponse(
+        insights=insights,
+        cache_key=cache_key
+    )
+
+@api_app.post("/insights/file", response_model=FileUploadResponse)
+async def upload_file_for_insights(file: UploadFile = File(...)):
+    """Upload a file and get AI insights"""
     try:
         # Determine file extension
-        file_extension = uploaded_file.name.split('.')[-1].lower()
+        file_extension = file.filename.split('.')[-1].lower()
         
         if file_extension not in FILE_LOADERS:
-            st.error(f"Unsupported file format: {file_extension}")
-            st.stop()
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {file_extension}")
+        
+        # Read file content
+        content = await file.read()
         
         # Load data using appropriate loader
-        df = FILE_LOADERS[file_extension](uploaded_file)
-        
-        # Display basic info
-        st.subheader("Dataset Overview")
-        st.write(f"Rows: {df.shape[0]}, Columns: {df.shape[1]}")
-        st.write("Columns:", ", ".join(df.columns.tolist()))
-        
-        # Show data sample
-        st.subheader("Data Sample")
-        st.dataframe(df.head())
-        
-        # Generate statistical summary
-        st.subheader("Statistical Summary")
-        st.write(df.describe())
+        df = FILE_LOADERS[file_extension](content)
         
         # Prepare data for LLM
         columns_info = ", ".join(df.columns.tolist())
@@ -167,33 +159,30 @@ if uploaded_file:
         # Generate cache key
         cache_key = get_cache_key(df)
         
+        # Check if already in storage
+        existing_insights = load_insights_from_file(cache_key)
+        if existing_insights is not None:
+            return FileUploadResponse(
+                insights=existing_insights,
+                cache_key=cache_key
+            )
+        
         # Generate insights with LangGraph
-        with st.spinner("Generating insights with Gemini..."):
-            try:
-                # Use LangGraph to generate insights
-                inputs = {
-                    "columns": columns_info,
-                    "stats_summary": stats_summary,
-                    "data_sample": data_sample
-                }
-                result = app_graph.invoke(inputs)
-                response = result["insights"]
-                
-                # Save insights to file
-                save_insights_to_file(cache_key, response)
-                
-                st.subheader("🔍 AI-Generated Insights")
-                st.markdown(response)
-                
-                # Show cache info and API endpoint
-                st.caption(f"Cache key: {cache_key[:8]}...")
-                st.info(f"GET API Endpoint: http://127.0.0.1:8000/insights/{cache_key}")
-                st.info(f"POST API Endpoint: POST http://127.0.0.1:8000/insights/file (upload file to get insights)")
-                
-            except Exception as e:
-                st.error(f"Error generating insights: {str(e)}")
-                st.info("Please check your API keys and try again.")
-                
+        inputs = {
+            "columns": columns_info,
+            "stats_summary": stats_summary,
+            "data_sample": data_sample
+        }
+        result = app_graph.invoke(inputs)
+        response = result["insights"]
+        
+        # Store the result in JSON file
+        save_insights_to_file(cache_key, response)
+        
+        return FileUploadResponse(
+            insights=response,
+            cache_key=cache_key
+        )
+        
     except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
-        st.info("Please make sure the file is properly formatted.")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")

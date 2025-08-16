@@ -1,0 +1,11 @@
+langchain-google-genai
+pandas
+python-dotenv
+streamlit
+openpyxl
+langsmith
+langgraph
+fastapi
+uvicorn
+python-multipart
+langchain
