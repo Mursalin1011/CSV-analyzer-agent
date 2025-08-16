@@ -1,3 +1,6 @@
 .env
 env
 __pycache__
+/.gitignore
+/prompts.txt
+/QWEN.md
