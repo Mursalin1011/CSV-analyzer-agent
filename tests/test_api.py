@@ -6,7 +6,7 @@ import requests
 url = "http://127.0.0.1:8000/insights/file"
 
 # Replace 'sample.csv' with the path to your test CSV file
-files = {'file': open('sample.csv', 'rb')}
+files = {'file': open('..\\sample.csv', 'rb')}
 
 response = requests.post(url, files=files)
 

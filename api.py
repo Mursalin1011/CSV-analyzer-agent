@@ -5,6 +5,7 @@ from io import StringIO, BytesIO
 import hashlib
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import OllamaLLM
 from langchain.prompts import PromptTemplate
 from langchain.callbacks import tracing_v2_enabled
 from langchain_community.cache import InMemoryCache
@@ -13,7 +14,8 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 import operator
 from dotenv import load_dotenv
-from utils import save_insights_to_file, load_insights_from_file, INSIGHTS_CACHE_FILE
+from utils import save_insights_to_file, load_insights_from_file
+from database import init_db
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,12 +27,27 @@ os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 # Initialize caching
 set_llm_cache(InMemoryCache())
 
-# Initialize Gemini LLM
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.1  # Reduced from 0.3 for more focused responses
-)
+# Initialize the database
+init_db()
+
+# Configuration for LLM selection
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "gemini" or "ollama"
+
+# Initialize LLM based on configuration
+if LLM_PROVIDER == "gemini":
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        temperature=0.1  # Reduced from 0.3 for more focused responses
+    )
+elif LLM_PROVIDER == "ollama":
+    llm = OllamaLLM(
+        model=os.getenv("OLLAMA_MODEL", "qwen3:0.5b"),  # Adjust model name if needed
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        temperature=0.1
+    )
+else:
+    raise ValueError(f"Unsupported LLM provider: {LLM_PROVIDER}")
 
 # Prompt template for data insights
 prompt_template = PromptTemplate(
@@ -74,7 +91,15 @@ def generate_insights(state: AnalysisState) -> dict:
                 "stats_summary": state["stats_summary"],
                 "data_sample": state["data_sample"]
             })
-            return {"insights": result.content}
+            
+            # Handle different response types from different LLMs
+            # Some LLMs return a string directly, others return an object with content attribute
+            if hasattr(result, 'content'):
+                insights = result.content
+            else:
+                insights = str(result)
+                
+            return {"insights": insights}
         except Exception as e:
             return {"insights": f"Error generating insights: {str(e)}"}
 
@@ -113,20 +138,49 @@ def get_cache_key(df):
 
 
 
-# FastAPI app for API endpoint
-api_app = FastAPI(title="CSV Insights API", version="1.0.0")
+# FastAPI app for API endpoint with enhanced documentation
+api_app = FastAPI(
+    title="CSV Insights API",
+    description="An API for generating AI-powered insights from CSV, Excel, and JSON files",
+    version="1.0.0",
+    contact={
+        "name": "CSV Analyzer Team",
+        # "url": "https://github.com/your-org/csv-analyzer-agent",
+        # "email": "support@csv-analyzer.com",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+)
 
 class InsightsResponse(BaseModel):
+    """
+    Response model for insights retrieval
+    """
     insights: str
     cache_key: str
 
 class FileUploadResponse(BaseModel):
+    """
+    Response model for file upload and insights generation
+    """
     insights: str
     cache_key: str
 
-@api_app.get("/insights/{cache_key}", response_model=InsightsResponse)
+@api_app.get(
+    "/insights/{cache_key}", 
+    response_model=InsightsResponse,
+    summary="Get insights by cache key",
+    description="Retrieve previously generated insights using the cache key returned from file upload",
+    tags=["Insights Retrieval"]
+)
 async def get_insights(cache_key: str):
-    """Get insights by cache key"""
+    """
+    Get insights by cache key
+    
+    - **cache_key**: The unique identifier for the cached insights
+    """
     insights = load_insights_from_file(cache_key)
     if insights is None:
         raise HTTPException(status_code=404, detail="Insights not found for this key")
@@ -136,9 +190,21 @@ async def get_insights(cache_key: str):
         cache_key=cache_key
     )
 
-@api_app.post("/insights/file", response_model=FileUploadResponse)
+@api_app.post(
+    "/insights/file", 
+    response_model=FileUploadResponse,
+    summary="Upload a file and get AI insights",
+    description="Upload a CSV, Excel (XLSX/XLS), or JSON file to generate AI-powered insights. "
+                "The API will analyze the data and return key patterns, correlations, and recommendations. "
+                "Results are cached to avoid reprocessing the same file.",
+    tags=["File Processing"]
+)
 async def upload_file_for_insights(file: UploadFile = File(...)):
-    """Upload a file and get AI insights"""
+    """
+    Upload a file and get AI insights
+    
+    - **file**: The file to analyze (CSV, XLSX, XLS, or JSON)
+    """
     try:
         # Determine file extension
         file_extension = file.filename.split('.')[-1].lower()
@@ -179,7 +245,7 @@ async def upload_file_for_insights(file: UploadFile = File(...)):
         result = app_graph.invoke(inputs)
         response = result["insights"]
         
-        # Store the result in JSON file
+        # Store the result in database
         save_insights_to_file(cache_key, response)
         
         return FileUploadResponse(
@@ -189,3 +255,16 @@ async def upload_file_for_insights(file: UploadFile = File(...)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+# Health check endpoint
+@api_app.get(
+    "/health", 
+    summary="Health check",
+    description="Check if the API is running and healthy",
+    tags=["Health"]
+)
+async def health_check():
+    """
+    Health check endpoint
+    """
+    return {"status": "healthy", "llm_provider": LLM_PROVIDER}

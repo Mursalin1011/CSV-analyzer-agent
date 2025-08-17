@@ -22,6 +22,7 @@ from langchain.globals import set_llm_cache
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 import operator
+from langchain_ollama import OllamaLLM
 import requests
 from utils import save_insights_to_file
 
@@ -30,18 +31,28 @@ from utils import save_insights_to_file
 load_dotenv()
 
 # Configure LangSmith (uses environment variables from .env)
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+# os.environ["LANGCHAIN_TRACING_V2"] = "true"
+# os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "gemini" or "ollama"
+
 
 # Initialize caching
 set_llm_cache(InMemoryCache())
 
-# Initialize Gemini LLM
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.1  # Reduced from 0.3 for more focused responses
-)
+if LLM_PROVIDER == "gemini":
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        temperature=0.1  # Reduced from 0.3 for more focused responses
+    )
+elif LLM_PROVIDER == "ollama":
+    llm = OllamaLLM(
+        model=os.getenv("OLLAMA_MODEL", "qwen3:0.6b"),  # Get model from env or use default
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        temperature=0.1
+    )
+else:
+    raise ValueError(f"Unsupported LLM provider: {LLM_PROVIDER}")
 
 # Prompt template for data insights
 prompt_template = PromptTemplate(
@@ -85,7 +96,15 @@ def generate_insights(state: AnalysisState) -> Dict[str, Any]:
                 "stats_summary": state["stats_summary"],
                 "data_sample": state["data_sample"]
             })
-            return {"insights": result.content}
+            
+            # Handle different response types from different LLMs
+            # Some LLMs return a string directly, others return an object with content attribute
+            if hasattr(result, 'content'):
+                insights = result.content
+            else:
+                insights = str(result)
+                
+            return {"insights": insights}
         except Exception as e:
             return {"insights": f"Error generating insights: {str(e)}"}
 
@@ -124,7 +143,7 @@ def get_cache_key(df):
 
 # Streamlit UI
 st.title("📊 CSV Data Insights Generator")
-st.markdown("Upload your data file to get AI-powered insights using Google Gemini")
+st.markdown(f"Upload your data file to get AI-powered insights using {LLM_PROVIDER.upper()}")
 
 # Display API information
 st.info("API Endpoint for file upload: POST http://127.0.0.1:8000/insights/file")
@@ -171,7 +190,7 @@ if uploaded_file:
         cache_key = get_cache_key(df)
         
         # Generate insights with LangGraph
-        with st.spinner("Generating insights with Gemini..."):
+        with st.spinner(f"Generating insights with {LLM_PROVIDER.upper()}..."):
             try:
                 # Use LangGraph to generate insights
                 inputs = {
