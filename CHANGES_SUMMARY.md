@@ -22,11 +22,18 @@ This document summarizes the key changes made to the CSV Analyzer Agent applicat
 - Added proper checking for `content` attribute in LLM responses
 - Ensured compatibility with both Gemini (returns AIMessage) and Ollama (returns string)
 
-### 4. Testing
+### 4. New API Endpoints
+- Added `/insights` endpoint to retrieve all cached insights
+- Added `/insights/search/{query}` endpoint to search through all insights
+- Created appropriate response models for the new endpoints
+- Updated API documentation with details about the new endpoints
+
+### 5. Testing
 - Created comprehensive test suite in the `tests` directory
 - Added tests for both API and Streamlit applications
 - Verified functionality with both LLM providers
 - Tested database operations and API endpoints
+- Added specific tests for the new endpoints
 
 ## Configuration
 
@@ -60,3 +67,4 @@ All tests pass successfully with both models:
 - API endpoints function properly
 - Both Streamlit and FastAPI applications work with both LLM providers
 - Response format handling works for both models
+- New endpoints for retrieving all insights and searching insights work correctly

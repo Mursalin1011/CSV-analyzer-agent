@@ -1,4 +1,4 @@
-from database import save_insights_to_db, load_insights_from_db
+from database import save_insights_to_db, load_insights_from_db, get_all_insights_from_db
 
 def save_insights_to_file(cache_key: str, insights: str):
     """Save insights to database"""
@@ -7,3 +7,7 @@ def save_insights_to_file(cache_key: str, insights: str):
 def load_insights_from_file(cache_key: str) -> str:
     """Load insights from database"""
     return load_insights_from_db(cache_key)
+
+def get_all_insights_from_file():
+    """Get all insights from database"""
+    return get_all_insights_from_db()

@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from typing import Optional
+from typing import Optional, List, Tuple
 
 # Database file path
 DATABASE_FILE = "insights_cache.db"
@@ -60,3 +60,21 @@ def load_insights_from_db(cache_key: str) -> Optional[str]:
     except Exception as e:
         print(f"Error loading from database: {e}")
         return None
+
+def get_all_insights_from_db() -> List[Tuple[str, str]]:
+    """Get all insights from SQLite database"""
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT cache_key, insights FROM insights_cache
+        ''')
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        return results
+    except Exception as e:
+        print(f"Error loading all insights from database: {e}")
+        return []
